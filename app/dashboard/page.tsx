@@ -8,8 +8,3 @@ export default function DashboardHome() {
       </p>
     </div>
   )
-<<<<<<< HEAD
-}
-=======
-}
->>>>>>> cc406ec1d31dc1e17c8efa0c121ab972920d101e
