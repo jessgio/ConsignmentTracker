@@ -28,6 +28,14 @@ export default function ReportsPage({ initialTransactions, stores, skus }: Repor
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [loading, setLoading] = useState(false)
 
+  const handleDelete = async (id: string) => {
+  if (!confirm('Are you sure you want to delete this transaction?')) return
+
+  setLoading(true)
+  await deleteTransaction(id)
+  window.location.reload()
+}
+
   // Toggle single checkbox
   const toggleSelect = (id: string) => {
     if (selectedIds.includes(id)) {
@@ -171,7 +179,12 @@ export default function ReportsPage({ initialTransactions, stores, skus }: Repor
                       Edit
                     </button>
                     <button 
-                      onClick={() => handleDelete(tx.id)} 
+                      onClick={async () => {
+                        if (confirm('Are you sure you want to delete this transaction?')) {
+                          await deleteTransaction(tx.id)
+                          window.location.reload()
+                        }
+                      }} 
                       className="text-red-400 hover:text-red-300"
                     >
                       Delete
