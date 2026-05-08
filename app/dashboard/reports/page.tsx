@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { format } from 'date-fns'
-import { updateTransaction, deleteTransaction } from './actions'
 
 interface Transaction {
   id: string
@@ -11,133 +11,73 @@ interface Transaction {
   change_type: string
   reason: string | null
   timestamp: string
-  stores: { name: string }
-  skus: { sku: string }
-  current_stock: number
 }
 
-export default function ReportsPage({
-  initialTransactions,
-  stores,
-  skus,
-}: {
-  initialTransactions: Transaction[]
-  stores: { name: string }[]
-  skus: { sku: string }[]
-}) {
-  const [transactions, setTransactions] = useState(initialTransactions)
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [editingTx, setEditingTx] = useState<Transaction | null>(null)
-  const [loading, setLoading] = useState(false)
+export default function ReportsPage() {
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // ====================== SELECTIONS ======================
-  const toggleSelect = (id: string) => {
-    if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter((i) => i !== id))
-    } else {
-      setSelectedIds([...selectedIds, id])
-    }
-  }
+  const supabase = createClient()
 
-  const toggleSelectAll = () => {
-    if (selectedIds.length === transactions.length) {
-      setSelectedIds([])
-    } else {
-      setSelectedIds(transactions.map((t) => t.id))
-    }
-  }
-
-  // ====================== BULK DELETE ======================
-  const handleBulkDelete = async () => {
-    if (!confirm(`Delete ${selectedIds.length} transactions?`)) return
-
+  // Fetch transactions
+  const fetchTransactions = async () => {
     setLoading(true)
-    for (const id of selectedIds) {
-      await deleteTransaction(id)
-    }
-    setSelectedIds([])
-    window.location.reload()
+    const { data } = await supabase
+      .from('transaction_logs')
+      .select(`
+        id,
+        invoice_number,
+        quantity_change,
+        change_type,
+        reason,
+        timestamp,
+        stores (name),
+        skus (sku)
+      `)
+      .order('timestamp', { ascending: false })
+
+    if (data) setTransactions(data)
+    setLoading(false)
   }
 
-  // ====================== CSV EXPORT ======================
-  const exportToCSV = () => {
-    if (transactions.length === 0) return
+  useEffect(() => {
+    fetchTransactions()
+  }, [])
 
-    const headers = ['Invoice', 'Date', 'Store', 'SKU', 'Qty Change', 'Current Stock', 'Reason']
-    const rows = transactions.map((tx) => [
-      tx.invoice_number,
-      format(new Date(tx.timestamp), 'yyyy-MM-dd'),
-      tx.stores?.name || '',
-      tx.skus?.sku || '',
-      tx.quantity_change,
-      tx.current_stock,
-      tx.reason || '',
-    ])
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map((row) => row.map((field) => `"${field}"`).join(',')),
-    ].join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`
-    link.click()
-  }
-
-  // ====================== DELETE SINGLE ======================
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this transaction?')) return
 
-    setLoading(true)
-    await deleteTransaction(id)
-    window.location.reload()
+    const { error } = await supabase.from('transaction_logs').delete().eq('id', id)
+    if (!error) {
+      fetchTransactions() // Refresh list
+    }
+  }
+
+  if (loading) {
+    return <div className="text-white">Loading transactions...</div>
   }
 
   return (
     <div>
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold text-white">Transaction Reports</h1>
-
-        <div className="flex gap-3">
-          {selectedIds.length > 0 && (
-            <button
-              onClick={handleBulkDelete}
-              disabled={loading}
-              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-md text-sm"
-            >
-              Delete Selected ({selectedIds.length})
-            </button>
-          )}
-          <button
-            onClick={exportToCSV}
-            className="bg-[#334155] hover:bg-[#475569] px-4 py-2 rounded-md text-sm"
-          >
-            Export to CSV
-          </button>
-        </div>
+        <button
+          onClick={fetchTransactions}
+          className="bg-[#334155] hover:bg-[#475569] px-4 py-2 rounded-md text-sm"
+        >
+          Refresh
+        </button>
       </div>
 
-      {/* Transactions Table */}
       <div className="bg-[#1e293b] rounded-xl border border-[#334155] overflow-hidden">
         <table className="w-full text-sm text-left">
           <thead className="bg-[#0f172a]">
             <tr>
-              <th className="px-6 py-4 w-12">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.length === transactions.length && transactions.length > 0}
-                  onChange={toggleSelectAll}
-                  className="w-4 h-4"
-                />
-              </th>
               <th className="px-6 py-4">Invoice</th>
               <th className="px-6 py-4">Date</th>
               <th className="px-6 py-4">Store</th>
               <th className="px-6 py-4">SKU</th>
               <th className="px-6 py-4">Change</th>
-              <th className="px-6 py-4">Current Stock</th>
               <th className="px-6 py-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -145,16 +85,10 @@ export default function ReportsPage({
             {transactions.length > 0 ? (
               transactions.map((tx) => (
                 <tr key={tx.id} className="hover:bg-[#334155]/40">
-                  <td className="px-6 py-4">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(tx.id)}
-                      onChange={() => toggleSelect(tx.id)}
-                      className="w-4 h-4"
-                    />
-                  </td>
                   <td className="px-6 py-4 font-mono text-white">{tx.invoice_number}</td>
-                  <td className="px-6 py-4 text-gray-300">{format(new Date(tx.timestamp), 'MMM dd, yyyy')}</td>
+                  <td className="px-6 py-4 text-gray-300">
+                    {format(new Date(tx.timestamp), 'MMM dd, yyyy')}
+                  </td>
                   <td className="px-6 py-4 text-white">{tx.stores?.name}</td>
                   <td className="px-6 py-4 font-mono text-white">{tx.skus?.sku}</td>
                   <td className="px-6 py-4">
@@ -162,21 +96,10 @@ export default function ReportsPage({
                       {tx.quantity_change}
                     </span>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className={tx.current_stock <= 0 ? 'bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs' : 'bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-xs'}>
-                      {tx.current_stock}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 space-x-3 text-right">
-                    <button
-                      onClick={() => setEditingTx(tx)}
-                      className="text-blue-400 hover:text-blue-300"
-                    >
-                      Edit
-                    </button>
+                  <td className="px-6 py-4 text-right">
                     <button
                       onClick={() => handleDelete(tx.id)}
-                      className="text-red-400 hover:text-red-300"
+                      className="text-red-400 hover:text-red-300 text-sm"
                     >
                       Delete
                     </button>
@@ -185,7 +108,7 @@ export default function ReportsPage({
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="px-6 py-8 text-center text-gray-400">
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
                   No transactions found.
                 </td>
               </tr>
@@ -193,34 +116,6 @@ export default function ReportsPage({
           </tbody>
         </table>
       </div>
-
-      {/* Edit Modal */}
-      {editingTx && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[#1e293b] p-8 rounded-xl border border-[#475569] w-full max-w-md">
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault()
-                setLoading(true)
-                const formData = new FormData(e.currentTarget)
-                const result = await updateTransaction(formData)
-                if (result.success) {
-                  setEditingTx(null)
-                  window.location.reload()
-                }
-                setLoading(false)
-              }}
-            >
-              <input type="hidden" name="id" value={editingTx.id} />
-              {/* You can expand form fields here later */}
-              <div className="flex justify-end gap-3 pt-4">
-                <button type="button" onClick={() => setEditingTx(null)} className="text-gray-400">Cancel</button>
-                <button type="submit" disabled={loading} className="bg-blue-600 px-5 py-2 rounded-md">Save Changes</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
