@@ -44,10 +44,20 @@ export default function SalesReport() {
   }
 
   const updateLineItem = (index: number, field: keyof LineItem, value: string | number) => {
-    const newItems = [...lineItems]
-    newItems[index][field] = value as any
-    setLineItems(newItems)
-  }
+  setLineItems((prev) => {
+    const newItems = [...prev]
+    const currentItem = { ...newItems[index] }
+
+    if (field === 'sku') {
+      currentItem.sku = value as string
+    } else {
+      currentItem.quantity = value as number
+    }
+
+    newItems[index] = currentItem
+    return newItems
+  })
+}
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
