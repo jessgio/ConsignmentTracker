@@ -11,55 +11,58 @@ export async function submitSale(
 ) {
   const supabase = await createClient()
 
-  // Check if invoice already exists
-  const { data: existing } = await supabase
+  // 1. Check if invoice number already exists
+  const { data: existingInvoice } = await supabase
     .from('transaction_logs')
     .select('id')
-    .eq('invoice_number', invoiceNumber.trim().toUpperCase())
-    .limit(1)
+    .eq('invoice_number', invoiceNumber)
+    .single()
 
-  if (existing && existing.length > 0) {
+  if (existingInvoice) {
     return { error: `Invoice number ${invoiceNumber} already exists.` }
   }
 
-  // Get or create store
+  // 2. Get or create the store
   let { data: store } = await supabase
     .from('stores')
     .select('*')
-    .eq('name', storeName.trim())
+    .eq('name', storeName)
     .single()
 
   if (!store) {
     const { data: newStore, error } = await supabase
       .from('stores')
-      .insert({ name: storeName.trim() })
+      .insert({ name: storeName })
       .select()
       .single()
+
     if (error) return { error: 'Failed to create store' }
     store = newStore
   }
 
-  // Process each line item
+  // 3. Process each line item
   for (const item of lineItems) {
     // Get or create SKU
     let { data: skuData } = await supabase
       .from('skus')
       .select('*')
-      .eq('sku', item.sku.trim().toUpperCase())
+      .eq('sku', item.sku)
       .single()
 
     if (!skuData) {
       const { data: newSku } = await supabase
         .from('skus')
-        .insert({ sku: item.sku.trim().toUpperCase() })
+        .insert({ sku: item.sku })
         .select()
         .single()
+
+      if (!newSku) return { error: 'Failed to create SKU' }
       skuData = newSku
     }
 
-    // Insert transaction
+    // Insert transaction log
     await supabase.from('transaction_logs').insert({
-      invoice_number: invoiceNumber.trim().toUpperCase(),
+      invoice_number: invoiceNumber,
       store_id: store.id,
       sku_id: skuData.id,
       change_type: 'sale',
