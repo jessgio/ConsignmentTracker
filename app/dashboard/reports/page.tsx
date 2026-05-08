@@ -1,209 +1,226 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useState } from 'react'
+import { format } from 'date-fns'
 import { updateTransaction, deleteTransaction } from './actions'
 
-interface LineItem {
-  sku: string
-  quantity: number
-}
-
-interface SKU {
+interface Transaction {
   id: string
-  sku: string
-  name: string | null
+  invoice_number: string
+  quantity_change: number
+  change_type: string
+  reason: string | null
+  timestamp: string
+  stores: { name: string }
+  skus: { sku: string }
+  current_stock: number
 }
 
-export default function SalesReport() {
-  const supabase = createClient()
-
-  const [invoiceNumber, setInvoiceNumber] = useState('')
-  const [storeName, setStoreName] = useState('')
-  const [lineItems, setLineItems] = useState<LineItem[]>([{ sku: '', quantity: 1 }])
-  const [notes, setNotes] = useState('')
+export default function ReportsPage({
+  initialTransactions,
+  stores,
+  skus,
+}: {
+  initialTransactions: Transaction[]
+  stores: { name: string }[]
+  skus: { sku: string }[]
+}) {
+  const [transactions, setTransactions] = useState(initialTransactions)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null)
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [skus, setSkus] = useState<SKU[]>([])
 
-  // Fetch SKUs from database
-  useEffect(() => {
-    fetchSKUs()
-  }, [])
-
-  const fetchSKUs = async () => {
-    const { data, error } = await supabase
-      .from('skus')
-      .select('id, sku, name')
-      .order('sku')
-
-    if (data) setSkus(data)
-  }
-
-  const addLineItem = () => {
-    setLineItems([...lineItems, { sku: '', quantity: 1 }])
-  }
-
-  const removeLineItem = (index: number) => {
-    if (lineItems.length === 1) return
-    const newItems = lineItems.filter((_, i) => i !== index)
-    setLineItems(newItems)
-  }
-
-  const updateLineItem = (index: number, field: keyof LineItem, value: string | number) => {
-    const newItems = [...lineItems]
-    if (field === 'sku') {
-      newItems[index].sku = value as string
+  // ====================== SELECTIONS ======================
+  const toggleSelect = (id: string) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter((i) => i !== id))
     } else {
-      newItems[index].quantity = value as number
+      setSelectedIds([...selectedIds, id])
     }
-    setLineItems(newItems)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const toggleSelectAll = () => {
+    if (selectedIds.length === transactions.length) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(transactions.map((t) => t.id))
+    }
+  }
+
+  // ====================== BULK DELETE ======================
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedIds.length} transactions?`)) return
+
     setLoading(true)
-    setMessage(null)
-
-    // Basic validation
-    if (!invoiceNumber || !storeName) {
-      setMessage({ type: 'error', text: 'Please fill in Invoice Number and Store.' })
-      setLoading(false)
-      return
+    for (const id of selectedIds) {
+      await deleteTransaction(id)
     }
+    setSelectedIds([])
+    window.location.reload()
+  }
 
-    const hasEmptySku = lineItems.some(item => !item.sku.trim())
-    if (hasEmptySku) {
-      setMessage({ type: 'error', text: 'Please select a SKU for all line items.' })
-      setLoading(false)
-      return
-    }
+  // ====================== CSV EXPORT ======================
+  const exportToCSV = () => {
+    if (transactions.length === 0) return
 
-    const result = await submitSale(
-      invoiceNumber.trim().toUpperCase(),
-      storeName.trim(),
-      lineItems,
-      notes
-    )
+    const headers = ['Invoice', 'Date', 'Store', 'SKU', 'Qty Change', 'Current Stock', 'Reason']
+    const rows = transactions.map((tx) => [
+      tx.invoice_number,
+      format(new Date(tx.timestamp), 'yyyy-MM-dd'),
+      tx.stores?.name || '',
+      tx.skus?.sku || '',
+      tx.quantity_change,
+      tx.current_stock,
+      tx.reason || '',
+    ])
 
-    if (result.error) {
-      setMessage({ type: 'error', text: result.error })
-    } else {
-      setMessage({ type: 'success', text: 'Sale recorded successfully!' })
-      // Reset form
-      setInvoiceNumber('')
-      setStoreName('')
-      setLineItems([{ sku: '', quantity: 1 }])
-      setNotes('')
-    }
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.map((field) => `"${field}"`).join(',')),
+    ].join('\n')
 
-    setLoading(false)
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+  }
+
+  // ====================== DELETE SINGLE ======================
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this transaction?')) return
+
+    setLoading(true)
+    await deleteTransaction(id)
+    window.location.reload()
   }
 
   return (
     <div>
-      <h1 className="text-3xl font-bold text-white mb-8">Sales Report</h1>
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-3xl font-bold text-white">Transaction Reports</h1>
 
-      <div className="max-w-4xl bg-[#1e293b] p-8 rounded-xl border border-[#334155]">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          
-          {/* Invoice & Store */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm text-gray-300 mb-1 block">Invoice Number *</label>
-              <input
-                type="text"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                required
-                className="w-full bg-[#0f172a] border border-[#475569] px-4 py-2 rounded-md text-white"
-                placeholder="INV-2025-00123"
-              />
-            </div>
-            <div>
-              <label className="text-sm text-gray-300 mb-1 block">Store *</label>
-              <input
-                type="text"
-                value={storeName}
-                onChange={(e) => setStoreName(e.target.value)}
-                required
-                className="w-full bg-[#0f172a] border border-[#475569] px-4 py-2 rounded-md text-white"
-                placeholder="Store Name"
-              />
-            </div>
-          </div>
-
-          {/* Line Items */}
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm text-gray-300">Line Items (SKU + Quantity) *</label>
-              <button type="button" onClick={addLineItem} className="text-sm bg-[#334155] hover:bg-[#475569] px-3 py-1 rounded">
-                + Add SKU
-              </button>
-            </div>
-
-            {lineItems.map((item, index) => (
-              <div key={index} className="flex gap-3 mb-3 items-center">
-                <select
-                  value={item.sku}
-                  onChange={(e) => updateLineItem(index, 'sku', e.target.value)}
-                  className="flex-1 bg-[#0f172a] border border-[#475569] px-4 py-2 rounded-md text-white"
-                  required
-                >
-                  <option value="">Select SKU</option>
-                  {skus.map((sku) => (
-                    <option key={sku.id} value={sku.sku}>
-                      {sku.sku} {sku.name ? `- ${sku.name}` : ''}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  value={item.quantity}
-                  onChange={(e) => updateLineItem(index, 'quantity', parseInt(e.target.value) || 1)}
-                  className="w-24 bg-[#0f172a] border border-[#475569] px-4 py-2 rounded-md text-white"
-                  min={1}
-                  required
-                />
-
-                <button
-                  type="button"
-                  onClick={() => removeLineItem(index)}
-                  disabled={lineItems.length === 1}
-                  className="px-3 text-red-400 hover:text-red-300 disabled:opacity-40"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="text-sm text-gray-300 mb-1 block">Notes / Reason</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full bg-[#0f172a] border border-[#475569] px-4 py-2 rounded-md text-white h-20"
-            />
-          </div>
-
+        <div className="flex gap-3">
+          {selectedIds.length > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              disabled={loading}
+              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-md text-sm"
+            >
+              Delete Selected ({selectedIds.length})
+            </button>
+          )}
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium disabled:opacity-70"
+            onClick={exportToCSV}
+            className="bg-[#334155] hover:bg-[#475569] px-4 py-2 rounded-md text-sm"
           >
-            {loading ? 'Submitting...' : 'Submit Sales Entry'}
+            Export to CSV
           </button>
-        </form>
-
-        {message && (
-          <p className={`mt-4 text-center ${message.type === 'error' ? 'text-red-400' : 'text-green-400'}`}>
-            {message.text}
-          </p>
-        )}
+        </div>
       </div>
+
+      {/* Transactions Table */}
+      <div className="bg-[#1e293b] rounded-xl border border-[#334155] overflow-hidden">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-[#0f172a]">
+            <tr>
+              <th className="px-6 py-4 w-12">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.length === transactions.length && transactions.length > 0}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4"
+                />
+              </th>
+              <th className="px-6 py-4">Invoice</th>
+              <th className="px-6 py-4">Date</th>
+              <th className="px-6 py-4">Store</th>
+              <th className="px-6 py-4">SKU</th>
+              <th className="px-6 py-4">Change</th>
+              <th className="px-6 py-4">Current Stock</th>
+              <th className="px-6 py-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#334155]">
+            {transactions.length > 0 ? (
+              transactions.map((tx) => (
+                <tr key={tx.id} className="hover:bg-[#334155]/40">
+                  <td className="px-6 py-4">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(tx.id)}
+                      onChange={() => toggleSelect(tx.id)}
+                      className="w-4 h-4"
+                    />
+                  </td>
+                  <td className="px-6 py-4 font-mono text-white">{tx.invoice_number}</td>
+                  <td className="px-6 py-4 text-gray-300">{format(new Date(tx.timestamp), 'MMM dd, yyyy')}</td>
+                  <td className="px-6 py-4 text-white">{tx.stores?.name}</td>
+                  <td className="px-6 py-4 font-mono text-white">{tx.skus?.sku}</td>
+                  <td className="px-6 py-4">
+                    <span className={tx.quantity_change < 0 ? 'text-red-400' : 'text-green-400'}>
+                      {tx.quantity_change}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={tx.current_stock <= 0 ? 'bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs' : 'bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-xs'}>
+                      {tx.current_stock}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 space-x-3 text-right">
+                    <button
+                      onClick={() => setEditingTx(tx)}
+                      className="text-blue-400 hover:text-blue-300"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(tx.id)}
+                      className="text-red-400 hover:text-red-300"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={8} className="px-6 py-8 text-center text-gray-400">
+                  No transactions found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Edit Modal */}
+      {editingTx && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#1e293b] p-8 rounded-xl border border-[#475569] w-full max-w-md">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault()
+                setLoading(true)
+                const formData = new FormData(e.currentTarget)
+                const result = await updateTransaction(formData)
+                if (result.success) {
+                  setEditingTx(null)
+                  window.location.reload()
+                }
+                setLoading(false)
+              }}
+            >
+              <input type="hidden" name="id" value={editingTx.id} />
+              {/* You can expand form fields here later */}
+              <div className="flex justify-end gap-3 pt-4">
+                <button type="button" onClick={() => setEditingTx(null)} className="text-gray-400">Cancel</button>
+                <button type="submit" disabled={loading} className="bg-blue-600 px-5 py-2 rounded-md">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
