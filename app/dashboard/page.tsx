@@ -7,4 +7,5 @@ export default function DashboardHome() {
         Use the sidebar to navigate through the app.
       </p>
     </div>
-    )
+  )
+}
