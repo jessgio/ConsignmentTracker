@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { submitSale } from './actions'
+import { updateTransaction, deleteTransaction } from './actions'
 
 interface LineItem {
   sku: string
